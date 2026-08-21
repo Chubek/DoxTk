@@ -1,5 +1,7 @@
 #include "doxtk_glue.hpp"
 
+#include <fontconfig/fontconfig.h>
+
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -7,6 +9,108 @@
 
 namespace doxtk {
 namespace glue {
+
+/* ========================================================================
+ * Fontconfig helper functions
+ * ======================================================================== */
+
+static std::string PatternToJson(FcPattern* pat) {
+    if (!pat) return "{}";
+    auto result = qamrpp::Value::make_table();
+
+    FcPatternIter iter;
+    FcPatternIterStart(pat, &iter);
+    do {
+        if (!FcPatternIterIsValid(pat, &iter)) break;
+        const char* obj = FcPatternIterGetObject(pat, &iter);
+        if (!obj) continue;
+        int count = FcPatternIterValueCount(pat, &iter);
+        if (count <= 0) continue;
+
+        FcValue v;
+        FcValueBinding b;
+        FcResult r = FcPatternIterGetValue(pat, &iter, 0, &v, &b);
+        if (r != FcResultMatch) continue;
+
+        qamrpp::ValuePtr val;
+        switch (v.type) {
+            case FcTypeString:
+                val = std::make_shared<qamrpp::Value>(
+                    std::string(reinterpret_cast<const char*>(v.u.s)));
+                break;
+            case FcTypeInteger:
+                val = std::make_shared<qamrpp::Value>(
+                    static_cast<double>(v.u.i));
+                break;
+            case FcTypeDouble:
+                val = std::make_shared<qamrpp::Value>(v.u.d);
+                break;
+            case FcTypeBool:
+                val = std::make_shared<qamrpp::Value>(v.u.b == FcTrue);
+                break;
+            default:
+                val = std::make_shared<qamrpp::Value>(std::string(""));
+                break;
+        }
+        result->table_entries.push_back({
+            std::make_shared<qamrpp::Value>(std::string(obj)),
+            val
+        });
+    } while (FcPatternIterNext(pat, &iter));
+
+    return JsonUtil::encode(result);
+}
+
+static FcPattern* JsonToPattern(const std::string& json) {
+    auto val = JsonUtil::decode(json);
+    if (!val || val->type != qamrpp::Value::TABLE) {
+        return FcPatternCreate();
+    }
+
+    auto pat = FcPatternCreate();
+    for (const auto& kv : val->table_entries) {
+        if (kv.first->type != qamrpp::Value::STRING) continue;
+        const auto& key = kv.first->string_value;
+        const auto& v = kv.second;
+
+        switch (v->type) {
+            case qamrpp::Value::STRING:
+                FcPatternAddString(pat, key.c_str(),
+                    reinterpret_cast<const FcChar8*>(v->string_value.c_str()));
+                break;
+            case qamrpp::Value::INT:
+                FcPatternAddInteger(pat, key.c_str(),
+                    static_cast<int>(v->int_value));
+                break;
+            case qamrpp::Value::FLOAT:
+                FcPatternAddDouble(pat, key.c_str(), v->float_value);
+                break;
+            case qamrpp::Value::BOOL:
+                FcPatternAddBool(pat, key.c_str(),
+                    v->bool_value ? FcTrue : FcFalse);
+                break;
+            default:
+                break;
+        }
+    }
+    return pat;
+}
+
+static FcObjectSet* JsonToObjectSet(const std::string& json) {
+    auto val = JsonUtil::decode(json);
+    if (!val || val->type != qamrpp::Value::TABLE) {
+        return nullptr;
+    }
+
+    auto os = FcObjectSetCreate();
+    for (const auto& kv : val->table_entries) {
+        const auto& v = kv.second;
+        if (v->type == qamrpp::Value::STRING) {
+            FcObjectSetAdd(os, v->string_value.c_str());
+        }
+    }
+    return os;
+}
 
 /* ========================================================================
  * JsonUtil
@@ -325,6 +429,207 @@ GlueResult JsonService::register_with(qamrpp::Context& ctx) {
     });
 
     ctx.globals["doxtk_json"] = service_table;
+    return GlueResult::success();
+}
+
+/* ========================================================================
+ * FontconfigService
+ * ======================================================================== */
+
+GlueResult FontconfigService::register_with(qamrpp::Context& ctx) {
+    auto fc_table = qamrpp::Value::make_table();
+
+    /* --- fc.init() --- */
+    qamrpp::NativeFn init_fn =
+        [](qamrpp::Context&, std::vector<qamrpp::ValuePtr>&) -> qamrpp::ValuePtr {
+            FcInit();
+            return std::make_shared<qamrpp::Value>(true);
+        };
+    fc_table->table_entries.push_back({
+        std::make_shared<qamrpp::Value>("init"),
+        std::make_shared<qamrpp::Value>(init_fn)
+    });
+
+    /* --- fc.parse(name) -> pattern_json --- */
+    qamrpp::NativeFn parse_fn =
+        [](qamrpp::Context&, std::vector<qamrpp::ValuePtr>& args) -> qamrpp::ValuePtr {
+            if (args.empty() || args[0]->type != qamrpp::Value::STRING) {
+                return qamrpp::Value::make_table();
+            }
+            auto pat = FcNameParse(reinterpret_cast<const FcChar8*>(
+                args[0]->string_value.c_str()));
+            if (!pat) return qamrpp::Value::make_table();
+            auto result = PatternToJson(pat);
+            FcPatternDestroy(pat);
+            return result;
+        };
+    fc_table->table_entries.push_back({
+        std::make_shared<qamrpp::Value>("parse"),
+        std::make_shared<qamrpp::Value>(parse_fn)
+    });
+
+    /* --- fc.match(pattern_json) -> font_info_json --- */
+    qamrpp::NativeFn match_fn =
+        [](qamrpp::Context&, std::vector<qamrpp::ValuePtr>& args) -> qamrpp::ValuePtr {
+            if (args.empty() || args[0]->type != qamrpp::Value::STRING) {
+                return qamrpp::Value::make_table();
+            }
+            auto pattern = JsonToPattern(args[0]->string_value);
+            if (!pattern) return qamrpp::Value::make_table();
+
+            FcConfigSubstitute(nullptr, pattern, FcMatchPattern);
+            FcDefaultSubstitute(pattern);
+
+            FcResult result = FcResultNoMatch;
+            auto matched = FcFontMatch(nullptr, pattern, &result);
+            FcPatternDestroy(pattern);
+
+            if (!matched) return qamrpp::Value::make_table();
+            auto out = PatternToJson(matched);
+            FcPatternDestroy(matched);
+            return out;
+        };
+    fc_table->table_entries.push_back({
+        std::make_shared<qamrpp::Value>("match"),
+        std::make_shared<qamrpp::Value>(match_fn)
+    });
+
+    /* --- fc.list(pattern_json, objects_json) -> [font_info_json, ...] --- */
+    qamrpp::NativeFn list_fn =
+        [](qamrpp::Context&, std::vector<qamrpp::ValuePtr>& args) -> qamrpp::ValuePtr {
+            FcPattern* pattern = nullptr;
+            if (args.size() >= 1 && args[0]->type == qamrpp::Value::STRING &&
+                !args[0]->string_value.empty()) {
+                pattern = JsonToPattern(args[0]->string_value);
+            }
+            if (!pattern) {
+                pattern = FcPatternCreate();
+            }
+
+            FcObjectSet* os = nullptr;
+            if (args.size() >= 2 && args[1]->type == qamrpp::Value::STRING &&
+                !args[1]->string_value.empty()) {
+                os = JsonToObjectSet(args[1]->string_value);
+            }
+            if (!os) {
+                os = FcObjectSetBuild(FC_FAMILY, FC_STYLE, FC_FILE, FC_INDEX,
+                                      FC_WEIGHT, FC_SLANT, FC_WIDTH,
+                                      FC_SCALABLE, FC_FONTVERSION, (char*)nullptr);
+            }
+
+            auto font_set = FcFontList(nullptr, pattern, os);
+            FcPatternDestroy(pattern);
+            FcObjectSetDestroy(os);
+
+            auto arr = qamrpp::Value::make_table();
+            if (font_set) {
+                for (int i = 0; i < font_set->nfont; ++i) {
+                    auto info = PatternToJson(font_set->fonts[i]);
+                    arr->table_entries.push_back({
+                        std::make_shared<qamrpp::Value>(
+                            static_cast<double>(i + 1)),
+                        info
+                    });
+                }
+                FcFontSetDestroy(font_set);
+            }
+            return arr;
+        };
+    fc_table->table_entries.push_back({
+        std::make_shared<qamrpp::Value>("list"),
+        std::make_shared<qamrpp::Value>(list_fn)
+    });
+
+    /* --- fc.sort(pattern_json, objects_json) -> [font_info_json, ...] --- */
+    qamrpp::NativeFn sort_fn =
+        [](qamrpp::Context&, std::vector<qamrpp::ValuePtr>& args) -> qamrpp::ValuePtr {
+            if (args.empty() || args[0]->type != qamrpp::Value::STRING) {
+                return qamrpp::Value::make_table();
+            }
+            auto pattern = JsonToPattern(args[0]->string_value);
+            if (!pattern) return qamrpp::Value::make_table();
+
+            FcConfigSubstitute(nullptr, pattern, FcMatchPattern);
+            FcDefaultSubstitute(pattern);
+
+            FcObjectSet* os = nullptr;
+            if (args.size() >= 2 && args[1]->type == qamrpp::Value::STRING &&
+                !args[1]->string_value.empty()) {
+                os = JsonToObjectSet(args[1]->string_value);
+            }
+            if (!os) {
+                os = FcObjectSetBuild(FC_FAMILY, FC_STYLE, FC_FILE, FC_INDEX,
+                                      FC_WEIGHT, FC_SLANT, FC_WIDTH,
+                                      FC_SCALABLE, FC_FONTVERSION, (char*)nullptr);
+            }
+
+            FcResult result = FcResultNoMatch;
+            auto font_set = FcFontSort(nullptr, pattern, FcTrue, nullptr, &result);
+            FcPatternDestroy(pattern);
+            FcObjectSetDestroy(os);
+
+            auto arr = qamrpp::Value::make_table();
+            if (font_set) {
+                for (int i = 0; i < font_set->nfont; ++i) {
+                    auto info = PatternToJson(font_set->fonts[i]);
+                    arr->table_entries.push_back({
+                        std::make_shared<qamrpp::Value>(
+                            static_cast<double>(i + 1)),
+                        info
+                    });
+                }
+                FcFontSetDestroy(font_set);
+            }
+            return arr;
+        };
+    fc_table->table_entries.push_back({
+        std::make_shared<qamrpp::Value>("sort"),
+        std::make_shared<qamrpp::Value>(sort_fn)
+    });
+
+    /* --- fc.substitute(pattern_json) -> pattern_json --- */
+    qamrpp::NativeFn substitute_fn =
+        [](qamrpp::Context&, std::vector<qamrpp::ValuePtr>& args) -> qamrpp::ValuePtr {
+            if (args.empty() || args[0]->type != qamrpp::Value::STRING) {
+                return qamrpp::Value::make_table();
+            }
+            auto pattern = JsonToPattern(args[0]->string_value);
+            if (!pattern) return qamrpp::Value::make_table();
+
+            FcConfigSubstitute(nullptr, pattern, FcMatchPattern);
+            FcDefaultSubstitute(pattern);
+
+            auto result = PatternToJson(pattern);
+            FcPatternDestroy(pattern);
+            return result;
+        };
+    fc_table->table_entries.push_back({
+        std::make_shared<qamrpp::Value>("substitute"),
+        std::make_shared<qamrpp::Value>(substitute_fn)
+    });
+
+    /* --- fc.render_prepare(pattern_json) -> pattern_json --- */
+    qamrpp::NativeFn render_prepare_fn =
+        [](qamrpp::Context&, std::vector<qamrpp::ValuePtr>& args) -> qamrpp::ValuePtr {
+            if (args.empty() || args[0]->type != qamrpp::Value::STRING) {
+                return qamrpp::Value::make_table();
+            }
+            auto pattern = JsonToPattern(args[0]->string_value);
+            if (!pattern) return qamrpp::Value::make_table();
+
+            auto rendered = FcFontRenderPrepare(nullptr, pattern, pattern);
+            FcPatternDestroy(pattern);
+            if (!rendered) return qamrpp::Value::make_table();
+            auto result = PatternToJson(rendered);
+            FcPatternDestroy(rendered);
+            return result;
+        };
+    fc_table->table_entries.push_back({
+        std::make_shared<qamrpp::Value>("render_prepare"),
+        std::make_shared<qamrpp::Value>(render_prepare_fn)
+    });
+
+    ctx.globals["fontconfig"] = fc_table;
     return GlueResult::success();
 }
 
@@ -675,6 +980,7 @@ GlueResult GlueContext::setup_sandbox() {
 GlueResult GlueContext::register_builtin_services() {
     registry_.register_service(std::make_unique<JsonService>());
     registry_.register_service(std::make_unique<ClockService>());
+    registry_.register_service(std::make_unique<FontconfigService>());
     registry_.register_service(std::make_unique<HaruPdfService>());
     registry_.register_service(std::make_unique<HaruFontService>());
 

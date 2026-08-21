@@ -99,6 +99,19 @@ public:
 };
 
 /* ========================================================================
+ * Host Service: fontconfig
+ * ======================================================================== */
+
+class FontconfigService : public HostService {
+public:
+    FontconfigService()
+        : HostService({"fontconfig", "1.0.0",
+                       "Font discovery, matching, and substitution via fontconfig", false}) {}
+
+    GlueResult register_with(qamrpp::Context& ctx) override;
+};
+
+/* ========================================================================
  * Host Service: doxtk.clock
  * ======================================================================== */
 
