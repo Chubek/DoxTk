@@ -1,6 +1,4 @@
-#ifndef QAMRPP_PLUGIN_WASM_TRANSLATION_HPP
-#define QAMRPP_PLUGIN_WASM_TRANSLATION_HPP
-
-#include "QaMRpp-Compile2WASM.hpp"
-
+#ifndef QAMRPP_COMPAT_WASM_TRANSLATION_HPP
+#define QAMRPP_COMPAT_WASM_TRANSLATION_HPP
+#include "compile-to-wasm/wasm_translation.hpp"
 #endif

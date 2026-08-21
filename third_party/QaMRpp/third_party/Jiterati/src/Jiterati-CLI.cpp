@@ -1,6 +1,7 @@
 #include "Jiterati.hpp"
 #include "BE/Metadata.hpp"
 #include "IR/IR.hpp"
+#include "IR/ICompiler.hpp"
 #include "zstd/zstd.hpp"
 
 #include <algorithm>
@@ -387,6 +388,51 @@ int parse_ir_file(fs::path const& file, bool verbose) {
     return 1;
 }
 
+std::string format_ir_file(fs::path const& file);
+
+std::unique_ptr<jiterati::ir::ICompiler> create_ir_compiler(std::string const& target) {
+    if (target == "amd64") return jiterati::ir::create_amd64_ir_compiler();
+    if (target == "aarch64") return jiterati::ir::create_aarch64_ir_compiler();
+    if (target == "rv64") return jiterati::ir::create_rv64_ir_compiler();
+    if (target == "wasm") return jiterati::ir::create_wasm_ir_compiler();
+    throw CliError("unknown target: " + target);
+}
+
+void print_ir_diagnostics(fs::path const& file, std::vector<jiterati::ir::Diagnostic> const& diagnostics) {
+    for (auto const& diagnostic : diagnostics) {
+        std::cerr << file << ": " << jiterati::ir::diagnostic_str(diagnostic) << '\n';
+    }
+}
+
+std::string compile_ir_text(fs::path const& file, std::string const& target, std::string const& emit) {
+    auto text = read_file(file);
+    if (emit == "ir") return format_ir_file(file);
+
+    std::vector<jiterati::ir::Diagnostic> diagnostics;
+    auto terse = jiterati::ir::parse_terse_module(text, &diagnostics);
+    if (!terse) {
+        if (!diagnostics.empty()) {
+            std::cerr << file << ": error: failed to parse terse IR\n";
+            print_ir_diagnostics(file, diagnostics);
+            std::string error;
+            if (jiterati::parse_jbl(text, &error)) {
+                throw CliError("compile accepts terse IR only; JBL input is parse/format only");
+            }
+            throw CliError("failed to parse input");
+        }
+        throw CliError("failed to parse input");
+    }
+
+    auto compiler = create_ir_compiler(target);
+    auto artifact = compiler->compile(*terse);
+    if (!artifact.ok()) {
+        std::cerr << file << ": error: failed to compile textual IR\n";
+        print_ir_diagnostics(file, artifact.diagnostics);
+        throw CliError("compilation failed");
+    }
+    return artifact.text;
+}
+
 std::string format_ir_file(fs::path const& file) {
     auto text = read_file(file);
     std::string error;
@@ -428,8 +474,6 @@ int command_compile(Options const& options) {
     if (has_arg(options, "--help")) { print_command_help("compile", std::cout); return 0; }
     auto pos = positional_args(options);
     if (pos.size() != 1) throw CliError("compile expects exactly one input file");
-    int parsed = parse_ir_file(pos[0], false);
-    if (parsed != 0) return parsed;
     std::string target = value_after(options, "--target").value_or("amd64");
     std::string emit = value_after(options, "--emit").value_or("asm");
     std::set<std::string> targets = {"amd64", "aarch64", "rv64", "wasm"};
@@ -437,9 +481,11 @@ int command_compile(Options const& options) {
     if (targets.count(target) == 0) throw CliError("unknown target: " + target);
     if (emits.count(emit) == 0) throw CliError("unknown emit kind: " + emit);
     std::ostringstream output;
-    if (emit == "ir") output << format_ir_file(pos[0]);
-    else if (emit == "asm") output << "; jiterati assembly placeholder\n; target: " << target << "\n; source: " << pos[0] << "\n";
-    else throw CliError("emit kind is not implemented for CLI compile: " + emit);
+    if (emit == "asm" || emit == "ir") {
+        output << compile_ir_text(pos[0], target, emit);
+    } else {
+        output << "; jiterati " << emit << " placeholder for target " << target << "\n; source: " << pos[0] << "\n";
+    }
     if (auto out = value_after(options, "--out")) write_file(*out, output.str());
     else std::cout << output.str();
     return 0;
