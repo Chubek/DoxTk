@@ -1,0 +1,432 @@
+id: doxygen-cli
+manifest_version: 1
+kind: cli
+name: EZDox CLI (Doxygen compatibility)
+description: >
+  Command manifest that exposes ezdox-cli subcommands, arguments, environment, and integration points. Provides bundle management, config scaffolding/validation, documentation generation for targets/markups, and execution of commands/pipelines defined in EZDox config files. Imports Doxygen command semantics alongside EZDox markup/target extensions.
+
+homepage: https://github.com/Chubek/EZDox
+executable:
+  command: ezdox-cli
+  aliases: [ezdox]
+  # When ezdox-cli is not found in PATH, the runner MAY resolve from $EZDOX_HOME/bin
+  resolution:
+    search_paths:
+      - "${EZDOX_HOME}/bin"
+      - "/usr/local/bin"
+      - "/usr/bin"
+imports:
+  # Relative path from this manifest. Referenced by 'doxygen_compat' below.
+  doxygen_commands: manifests/doxygen-commands.yaml
+env:
+  EZDOX_HOME:
+    default: "~/.ezdox"
+    description: Root directory for bundles, caches, and local CLI data.
+  EZDOX_CONFIG:
+    default: "EZDox.yaml"
+    description: Preferred config file to use when -C/--config is not given.
+  EZDOX_BUNDLE_PATH:
+    default: "${EZDOX_HOME}/bundles:${EZDOX_HOME}/markups:${EZDOX_HOME}/targets"
+    description: Colon-separated search path for installed bundles.
+  EZDOX_CACHE:
+    default: "${EZDOX_HOME}/cache"
+    description: Cache directory for parsed sources, indexes, and build artifacts.
+  EZDOX_COLOR:
+    default: "auto"
+    values: ["auto", "always", "never"]
+    description: Color mode.
+  EZDOX_JOBS:
+    default: "auto"
+    description: Default parallelism when -j/--jobs is omitted.
+files:
+  config:
+    # Accept all listed formats; 'yam' supported for short YAML.
+    formats: ["yaml", "json"]
+    names:
+      - "EZDox.yaml"
+      - "EZDox.json"
+    search_order:
+      - "./EZDox.yaml"
+      - "./EZDox.json"
+      - "${EZDOX_HOME}/projects/${PWD}/EZDox.yaml"
+  bundles:
+    install_root: "${EZDOX_HOME}"
+    layout:
+      archives: "${EZDOX_HOME}/bundles"
+      markups: "${EZDOX_HOME}/markups"
+      targets: "${EZDOX_HOME}/targets"
+      metadata: "${EZDOX_HOME}/bundles/meta"
+    extensions:
+      archive: [".ezb", ".zip", ".tar.gz", ".tgz"]
+      markup: [".so", ".dylib", ".dll", ".bundle"]
+      target: [".so", ".dylib", ".dll", ".bundle"]
+builtins:
+  markups:
+    - name: Markdown
+      lib: stdmarkup/EZDox-Markdown.cpp
+    - name: ReStructuredText
+      lib: stdmarkup/EZDox-ReStructuredText.cpp
+    - name: Docbook
+      lib: stdmarkup/EZDox-Docbook.cpp
+    - name: XWiki
+      lib: stdmarkup/EZDox-XWiki.cpp
+  targets:
+    - name: HTML
+      lib: stdtarget/EZDox-HTML.cpp
+    - name: LaTeX
+      lib: stdtarget/EZDox-LaTeX.cpp
+    - name: Manpage
+      lib: stdtarget/EZDox-Manpage.cpp
+    - name: ROFF
+      lib: stdtarget/EZDox-ROFF.cpp
+    - name: XML
+      lib: stdtarget/EZDox-XML.cpp
+doxygen_compat:
+  import: "${imports.doxygen_commands}"
+  enabled: true
+  notes: >
+    Doxygen command recognition is enabled during parse/find/generate phases for docstrings and comment blocks. EZDox markup and target extensions can be mixed with standard Doxygen directives.
+
+global_options:
+  - names: ["-C", "--config"]
+    type: path
+    description: Path to EZDox config file (EZDox.{yam,yaml,json,sexp,xml}).
+  - names: ["-H", "--home"]
+    type: path
+    description: Override $EZDOX_HOME (~/.ezdox by default).
+  - names: ["-j", "--jobs"]
+    type: int|string
+    description: Parallel jobs; integer or "auto".
+  - names: ["--color"]
+    type: enum
+    values: ["auto", "always", "never"]
+    env_bind: EZDOX_COLOR
+    description: Color output mode.
+  - names: ["--dry-run"]
+    type: bool
+    description: Plan-only; do not modify filesystem.
+  - names: ["-v", "--verbose"]
+    type: count
+    description: Increase verbosity; repeat for more detail.
+  - names: ["-q", "--quiet"]
+    type: bool
+    description: Suppress non-error output.
+  - names: ["--log-file"]
+    type: path
+    description: Write logs to file.
+  - names: ["-h", "--help"]
+    type: bool
+    description: Show help.
+  - names: ["--version"]
+    type: bool
+    description: Show version.
+commands:
+  help:
+    description: Show top-level or subcommand help.
+    usage: "ezdox-cli help [<subcommand>]"
+    args:
+      - name: subcommand
+        type: string
+        required: false
+  version:
+    description: Print version and environment info.
+    usage: "ezdox-cli version"
+    options:
+      - names: ["--long"]
+        type: bool
+        description: Include build flags, paths, and loaded bundles.
+  paths:
+    description: Print important EZDox directories and files.
+    usage: "ezdox-cli paths [--all|--home|--bundles|--markups|--targets|--cache|--config]"
+    options:
+      - names: ["--all"]
+        type: bool
+      - names: ["--home"]
+        type: bool
+      - names: ["--bundles"]
+        type: bool
+      - names: ["--markups"]
+        type: bool
+      - names: ["--targets"]
+        type: bool
+      - names: ["--cache"]
+        type: bool
+      - names: ["--config"]
+        type: bool
+  config:
+    description: Scaffold, validate, print, and run commands defined in EZDox config.
+    subcommands:
+      scaffold:
+        usage: "ezdox-cli config scaffold --format <yaml|json> --out <path> [options]"
+        options:
+          - names: ["-f", "--format"]
+            type: enum
+            values: ["yam", "yaml"]
+            required: true
+          - names: ["-o", "--out"]
+            type: path
+            required: true
+          - names: ["-p", "--project"]
+            type: string
+          - names: ["-V", "--project-version"]
+            type: string
+          - names: ["-S", "--source"]
+            type: path_list
+            description: One or more source roots (globs allowed).
+          - names: ["-I", "--include"]
+            type: path_list
+          - names: ["-E", "--exclude"]
+            type: path_list
+          - names: ["-t", "--targets"]
+            type: list
+            description: Target names (e.g., HTML, LaTeX).
+          - names: ["-m", "--markups"]
+            type: list
+            description: Markup names (e.g., Markdown, ReStructuredText).
+          - names: ["--with-pipelines"]
+            type: bool
+          - names: ["--with-commands"]
+            type: bool
+          - names: ["--overwrite"]
+            type: bool
+          - names: ["-y", "--yes"]
+            type: bool
+            description: Do not prompt before overwriting.
+          - names: ["--validate"]
+            type: path
+            description: Uses valijason to validate config file
+      validate:
+        usage: "ezdox-cli config validate -C <EZDox.*> [--json] [--strict]"
+        options:
+          - names: ["-C", "--config"]
+            type: path
+          - names: ["--json"]
+            type: bool
+          - names: ["--strict"]
+            type: bool
+      print:
+        usage: "ezdox-cli config print [-C <file>] [--key <path>]"
+        options:
+          - names: ["-C", "--config"]
+            type: path
+          - names: ["-k", "--key"]
+            type: string
+            description: Dot path to print a specific key.
+      run:
+        usage: "ezdox-cli config run -n <command|pipeline> [--] [args...]"
+        options:
+          - names: ["-n", "--name"]
+            type: string
+            required: true
+            description: Command or pipeline defined inside EZDox config.
+          - names: ["-e", "--env"]
+            type: kv_list
+            description: KEY=VALUE env pairs to inject.
+          - names: ["-w", "--workdir"]
+            type: path
+          - names: ["-t", "--timeout"]
+            type: duration
+          - names: ["--dry-run"]
+            type: bool
+        passthrough_args: true
+  bundle:
+    description: Build, install, list, remove, and inspect bundles.
+    subcommands:
+      build:
+        usage: "ezdox-cli bundle build -s <dir> -o <bundle.ezb> [options]"
+        options:
+          - names: ["-s", "--source"]
+            type: path
+            required: true
+          - names: ["-o", "--output"]
+            type: path
+            required: true
+          - names: ["-n", "--name"]
+            type: string
+          - names: ["-V", "--version"]
+            type: string
+          - names: ["-d", "--description"]
+            type: string
+          - names: ["-m", "--markups"]
+            type: list
+          - names: ["-t", "--targets"]
+            type: list
+          - names: ["--depends"]
+            type: list
+          - names: ["--metadata"]
+            type: path
+          - names: ["-F", "--format"]
+            type: enum
+            values: ["ezb", "zip", "tgz"]
+          - names: ["--sign"]
+            type: bool
+      install:
+        usage: "ezdox-cli bundle install -b <bundle.ezb|url> [--home <dir>] [--force]"
+        options:
+          - names: ["-b", "--bundle"]
+            type: path|string
+            required: true
+          - names: ["-H", "--home"]
+            type: path
+          - names: ["-f", "--force"]
+            type: bool
+          - names: ["--replace"]
+            type: bool
+      list:
+        usage: "ezdox-cli bundle list [--home <dir>] [--long]"
+        options:
+          - names: ["-H", "--home"]
+            type: path
+          - names: ["-l", "--long"]
+            type: bool
+      remove:
+        usage: "ezdox-cli bundle remove -n <name> [--home <dir>] [-y]"
+        options:
+          - names: ["-n", "--name"]
+            type: string
+            required: true
+          - names: ["-H", "--home"]
+            type: path
+          - names: ["-y", "--yes"]
+            type: bool
+      inspect:
+        usage: "ezdox-cli bundle inspect -b <bundle.ezb> [--json]"
+        options:
+          - names: ["-b", "--bundle"]
+            type: path
+            required: true
+          - names: ["--json"]
+            type: bool
+  find:
+    description: Scan source for docstrings, markup blocks, and Doxygen commands.
+    usage: "ezdox-cli find -S <dir...> [options]"
+    options:
+      - names: ["-S", "--source"]
+        type: path_list
+        required: true
+      - names: ["-E", "--exclude"]
+        type: path_list
+      - names: ["-g", "--glob"]
+        type: list
+      - names: ["-c", "--command"]
+        type: string
+        description: Filter by a Doxygen command (e.g., '@param').
+      - names: ["-M", "--markup"]
+        type: string
+        description: Filter by markup language name.
+      - names: ["-J", "--json"]
+        type: bool
+      - names: ["--summary"]
+        type: bool
+      - names: ["--count"]
+        type: bool
+  generate:
+    description: Generate documentation using configured markups and targets.
+    usage: "ezdox-cli generate -C <EZDox.*> [-t <target...>] [-m <markup...>] [options]"
+    options:
+      - names: ["-C", "--config"]
+        type: path
+      - names: ["-S", "--source"]
+        type: path_list
+      - names: ["-I", "--include"]
+        type: path_list
+      - names: ["-E", "--exclude"]
+        type: path_list
+      - names: ["-O", "--output"]
+        type: path
+      - names: ["-t", "--targets"]
+        type: list
+      - names: ["-m", "--markups"]
+        type: list
+      - names: ["-B", "--bundle"]
+        type: list
+        description: Bundles to load before generation.
+      - names: ["-D", "--define"]
+        type: kv_list
+        description: Preprocessor definitions.
+      - names: ["--watch"]
+        type: bool
+      - names: ["--clean"]
+        type: bool
+      - names: ["--profile"]
+        type: bool
+      - names: ["--strict"]
+        type: bool
+      - names: ["--doxygen-compat"]
+        type: bool
+        default: true
+        description: Recognize Doxygen commands per manifests/doxygen-commands.yaml.
+  install:
+    description: Install generated documentation to a destination.
+    usage: "ezdox-cli install -O <build_dir> -d <dest> [options]"
+    options:
+      - names: ["-O", "--output"]
+        type: path
+        required: true
+      - names: ["-d", "--dest"]
+        type: path
+        required: true
+      - names: ["-n", "--name"]
+        type: string
+      - names: ["-u", "--update"]
+        type: bool
+      - names: ["--mode"]
+        type: enum
+        values: ["copy", "symlink", "rsync"]
+  run:
+    description: Execute a named shell command or pipeline defined in EZDox config.
+    usage: "ezdox-cli run -C <EZDox.*> -n <name> [--] [args...]"
+    options:
+      - names: ["-C", "--config"]
+        type: path
+        required: true
+      - names: ["-n", "--name"]
+        type: string
+        required: true
+      - names: ["-e", "--env"]
+        type: kv_list
+      - names: ["-w", "--workdir"]
+        type: path
+      - names: ["-t", "--timeout"]
+        type: duration
+      - names: ["--dry-run"]
+        type: bool
+    passthrough_args: true
+  doctor:
+    description: Diagnose environment, config, and bundle health.
+    usage: "ezdox-cli doctor [--fix]"
+    options:
+      - names: ["--fix"]
+        type: bool
+exit_codes:
+  0: success
+  1: general_failure
+  2: config_error
+  3: invalid_arguments
+  4: not_found
+  5: dependency_missing
+examples:
+  - title: Scaffold a YAML config for Markdown -> HTML
+    command: >
+      ezdox-cli config scaffold -f yaml -o EZDox.yaml -p "MyProject" -V "1.0.0" -m Markdown -t HTML -S src -I include -E "build/**" --with-pipelines --with-commands
+
+  - title: Build and install a bundle into $EZDOX_HOME
+    command: >
+      ezdox-cli bundle build -s extensions/my-bundle -o dist/my-bundle.ezb -n my-bundle -V 0.1.0 && ezdox-cli bundle install -b dist/my-bundle.ezb
+
+  - title: Generate docs using config and installed bundles
+    command: >
+      ezdox-cli generate -C EZDox.yaml -O build/docs --strict --profile
+
+  - title: Find all @param occurrences (Doxygen command) in sources
+    command: >
+      ezdox-cli find -S src -g "**/*.cpp" -c "@param" --summary
+
+  - title: Run the "publish" pipeline defined in EZDox.yaml
+    command: >
+      ezdox-cli run -C EZDox.yaml -n publish --env BRANCH=main -- --fast
+
+notes:
+  - Bundles are installed under $EZDOX_HOME; archives land in ${EZDOX_HOME}/bundles, and extracted/linked components under ${EZDOX_HOME}/markups and ${EZDOX_HOME}/targets.
+  - EZDox config (EZDox.{yam,yaml,json,sexp,xml}) may define commands and pipelines that ezdox-cli can execute via `config run` or `run`.
+  - Doxygen command recognition is configured via manifests/doxygen-commands.yaml and used by `find` and `generate`.

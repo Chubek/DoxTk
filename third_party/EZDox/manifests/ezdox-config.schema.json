@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ezdox.dev/config-schema.json",
+  "title": "EZDox Configuration",
+  "description": "Schema for EZDox project configuration files (EZDox.yaml, EZDox.json, EZDox.toml).",
+
+  "type": "object",
+
+  "properties": {
+    "project": {
+      "type": "string",
+      "description": "Project name displayed in generated documentation.",
+      "default": "EZDox Project"
+    },
+    "version": {
+      "type": "string",
+      "description": "Project version string.",
+      "default": "0.1.0"
+    },
+    "sources": {
+      "type": "array",
+      "description": "Source directories or files to scan for docstrings.",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "default": ["."]
+    },
+    "frontpage": {
+      "type": "string",
+      "description": "Path to a Markdown file used as the documentation front page."
+    },
+    "manual": {
+      "type": "string",
+      "description": "Path to a directory of manual Markdown chapters."
+    },
+    "includes": {
+      "type": "array",
+      "description": "Include directories for the source scanner.",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "excludes": {
+      "type": "array",
+      "description": "Glob patterns or directories to exclude from scanning.",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "targets": {
+      "type": "array",
+      "description": "Output targets to generate (HTML, LaTeX, Manpage, ROFF, XML).",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "default": ["HTML"]
+    },
+    "markups": {
+      "type": "array",
+      "description": "Markup parsers to use (Markdown, ReStructuredText, Docbook, XWiki).",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "default": ["Markdown"]
+    },
+    "commands": {
+      "type": "object",
+      "description": "Named shell commands that can be executed via ezdox-cli run.",
+      "additionalProperties": { "type": "string" },
+      "default": {}
+    },
+    "pipelines": {
+      "type": "object",
+      "description": "Named pipelines composed of commands executed in sequence.",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "default": {}
+    },
+    "environment": {
+      "type": "object",
+      "description": "Environment variables set when running commands/pipelines.",
+      "additionalProperties": { "type": "string" },
+      "default": {}
+    },
+    "template": {
+      "type": "string",
+      "description": "Path to a custom template directory for HTML/LaTeX output."
+    },
+    "output": {
+      "type": "string",
+      "description": "Output directory for generated documentation.",
+      "default": "build/docs"
+    },
+    "doxygen_compat": {
+      "type": "boolean",
+      "description": "Enable Doxygen command recognition during parsing.",
+      "default": true
+    },
+    "bundles": {
+      "type": "array",
+      "description": "Bundles to load before generation.",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "defines": {
+      "type": "object",
+      "description": "Preprocessor definitions passed to the scanner.",
+      "additionalProperties": { "type": "string" },
+      "default": {}
+    },
+    "strict": {
+      "type": "boolean",
+      "description": "Treat warnings as errors.",
+      "default": false
+    },
+    "jobs": {
+      "oneOf": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "string", "enum": ["auto"] }
+      ],
+      "description": "Number of parallel jobs.",
+      "default": "auto"
+    }
+  },
+
+  "required": [
+    "project",
+    "sources",
+    "targets",
+    "markups"
+  ],
+
+  "additionalProperties": true
+}
