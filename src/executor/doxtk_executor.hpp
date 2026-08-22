@@ -24,7 +24,7 @@ namespace executor {
  * ======================================================================== */
 
 struct ActivationKey {
-    std::string digest;  /* hex-encoded SHA-256 */
+    std::string digest;  /* hex-encoded XXH3-64 */
 
     bool operator==(const ActivationKey& other) const {
         return digest == other.digest;
@@ -205,7 +205,7 @@ public:
     /* --- Activation Key Computation ([E-6], [E-7]) --- */
 
     /* Compute the activation key for the given input.
-     * K_act = SHA-256(H_code || H_inputs || H_params || H_env) */
+     * K_act = XXH3-64(H_code || H_inputs || H_params || H_env) */
     ActivationKey compute_activation_key(const ActivationInput& input) const;
 
     /* --- Execution ([E-1], [E-2], [E-3], [E-5]) --- */
@@ -227,11 +227,11 @@ public:
 
     /* --- Static helpers --- */
 
-    /* Compute SHA-256 of a string, returning hex-encoded digest. */
-    static std::string sha256_hex(const std::string& data);
+    /* Compute XXH3-64 of a string, returning hex-encoded digest. */
+    static std::string xxhash_hex(const std::string& data);
 
-    /* Compute SHA-256 of concatenated buffers. */
-    static std::string sha256_hex(const std::vector<std::string>& parts);
+    /* Compute XXH3-64 of concatenated buffers. */
+    static std::string xxhash_hex(const std::vector<std::string>& parts);
 
 private:
     /* Create a fresh, isolated GlueContext for one activation. */

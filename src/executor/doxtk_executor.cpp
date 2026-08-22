@@ -1,6 +1,7 @@
 #include "doxtk_executor.hpp"
 
-#include <openssl/sha.h>
+#define XXH_IMPLEMENTATION
+#include "../../third_party/xxHash/xxhash.h"
 
 #include <algorithm>
 #include <cstring>
@@ -15,16 +16,12 @@ namespace executor {
  * SHA-256 helpers
  * ======================================================================== */
 
-std::string Executor::sha256_hex(const std::string& data) {
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256(reinterpret_cast<const unsigned char*>(data.data()),
-           data.size(), hash);
+std::string Executor::xxhash_hex(const std::string& data) {
+    XXH64_hash_t hash = XXH3_64bits(data.data(), data.size());
 
     std::ostringstream oss;
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
-        oss << std::hex << std::setfill('0') << std::setw(2)
-            << static_cast<int>(hash[i]);
-    }
+    oss << std::hex << std::setfill('0') << std::setw(16)
+        << hash;
     return oss.str();
 }
 
