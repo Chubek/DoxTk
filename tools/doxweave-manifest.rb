@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "yaml"
 
 # doxweave-manifest.rb – Generates manifests/ from kernel Lua sources.
 #
