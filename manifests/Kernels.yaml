@@ -1,0 +1,5 @@
+---
+schema: doxtk.kernels/1.0.0
+kind: KernelManifest
+generated_by: tools/doxweave-manifest.rb
+kernels: []

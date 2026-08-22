@@ -1,0 +1,5 @@
+---
+schema: doxtk.capabilities/1.0.0
+kind: CapabilityRegistry
+generated_by: tools/doxweave-manifest.rb
+capabilities: {}
