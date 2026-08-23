@@ -1,0 +1,283 @@
+# This starter workflow is for a CMake project running on multiple platforms. There is a different starter workflow if you just want a single platform.
+# See: https://github.com/actions/starter-workflows/blob/main/ci/cmake-single-platform.yml
+name: CMake on multiple platforms
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+permissions:
+  contents: read
+
+env:
+  CSV_FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.cache/fetchcontent
+
+jobs:
+  build:
+    name: ${{ matrix.job_name || format('{0} {1} C++{2}', matrix.os, matrix.cpp_compiler, matrix.cxx_standard) }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      # Set fail-fast to false to ensure that feedback is delivered for all matrix combinations. Consider changing this to true when your workflow is stable.
+      fail-fast: false
+
+      # Keep old-standard compatibility coverage on MSVC and GCC, then add
+      # targeted C++20 coverage for Clang/libstdc++ and AppleClang/libc++.
+      matrix:
+        include:
+          - os: windows-latest
+            build_type: Release
+            c_compiler: cl
+            cpp_compiler: cl
+            cxx_standard: 11
+          - os: windows-latest
+            build_type: Release
+            c_compiler: cl
+            cpp_compiler: cl
+            cxx_standard: 17
+          - os: windows-latest
+            build_type: Release
+            c_compiler: cl
+            cpp_compiler: cl
+            cxx_standard: 20
+          - os: ubuntu-latest
+            build_type: Release
+            c_compiler: gcc
+            cpp_compiler: g++
+            cxx_standard: 11
+          - os: ubuntu-latest
+            build_type: Release
+            c_compiler: gcc
+            cpp_compiler: g++
+            cxx_standard: 17
+            # Regression profile from issue #293. The normal unit suite caught
+            # the bug only when optimized GCC code was combined with gcov
+            # instrumentation. This is not a Codecov upload job.
+            job_name: Ubuntu GCC C++17 (-O3 + gcov regression profile)
+            cmake_extra_flags: >-
+              -DCMAKE_CXX_FLAGS=--coverage
+              -DCMAKE_C_FLAGS=--coverage
+              -DCMAKE_EXE_LINKER_FLAGS=--coverage
+          - os: ubuntu-latest
+            build_type: Release
+            c_compiler: gcc
+            cpp_compiler: g++
+            cxx_standard: 20
+          - os: ubuntu-latest
+            build_type: Release
+            c_compiler: clang
+            cpp_compiler: clang++
+            cxx_standard: 20
+          - os: macos-latest
+            build_type: Release
+            c_compiler: clang
+            cpp_compiler: clang++
+            cxx_standard: 20
+
+    steps:
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v5
+      with:
+        submodules: recursive
+
+    - name: Install single_header
+      id: single-header
+      uses: vincentlaucsb/single_header@0.1.0
+      with:
+        run: "false"
+
+    - name: Cache CMake FetchContent dependencies
+      uses: actions/cache@v5
+      with:
+        path: ${{ env.CSV_FETCHCONTENT_BASE_DIR }}
+        key: fetchcontent-${{ runner.os }}-${{ matrix.c_compiler }}-std${{ matrix.cxx_standard }}-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+
+    - name: Set reusable strings
+      # Turn repeated input strings (such as the build output directory) into step outputs. These step outputs can be used throughout the workflow file.
+      id: strings
+      shell: bash
+      run: |
+        echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+
+    - name: Configure CMake
+      # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
+      # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
+      run: >
+        cmake -B ${{ steps.strings.outputs.build-output-dir }}
+        -DCSV_CXX_STANDARD=${{ matrix.cxx_standard }}
+        -DCSV_BUILD_SINGLE_INCLUDE_TEST=ON
+        -DCSV_SINGLE_HEADER_EXECUTABLE="${{ steps.single-header.outputs.executable }}"
+        -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
+        -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+        -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        ${{ matrix.cmake_extra_flags || '' }}
+        -S ${{ github.workspace }}
+
+    - name: Build
+      # Build your program with the given configuration. Note that --config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
+      # single_include_test is excluded from the default "all" target and is built explicitly in the next step.
+      run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
+
+    - name: Single-header smoke test
+      if: matrix.os != 'windows-latest'
+      # Explicitly build the single-header smoke-test target so CI validates the freshly generated amalgamated header.
+      # TODO: Re-enable on Windows after fixing single_include_test target generation/project discovery.
+      run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }} --target single_include_test
+
+    - name: Test
+      working-directory: ${{ steps.strings.outputs.build-output-dir }}
+      # Execute tests defined by the CMake configuration. Note that --build-config is needed because the default Windows generator is a multi-config generator (Visual Studio generator).
+      # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
+      run: ctest --build-config ${{ matrix.build_type }} --output-on-failure -V
+
+    - name: Dump CTest logs on failure
+      if: failure()
+      shell: bash
+      run: |
+        log="${{ steps.strings.outputs.build-output-dir }}/Testing/Temporary/LastTest.log"
+        if [ -f "$log" ]; then
+          echo "===== $log ====="
+          cat "$log"
+        else
+          echo "CTest log not found at $log"
+        fi
+
+  single-threaded:
+    name: Single-threaded build (CSV_ENABLE_THREADS=OFF)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v5
+      with:
+        submodules: recursive
+
+    - name: Cache CMake FetchContent dependencies
+      uses: actions/cache@v5
+      with:
+        path: ${{ env.CSV_FETCHCONTENT_BASE_DIR }}
+        key: fetchcontent-${{ runner.os }}-single-threaded-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+
+    - name: Configure CMake (single-threaded)
+      run: >
+        cmake -B ${{ github.workspace }}/build-single-thread
+        -DCSV_ENABLE_THREADS=OFF
+        -DCSV_CXX_STANDARD=20
+        -DCMAKE_BUILD_TYPE=Release
+        -S ${{ github.workspace }}
+
+    - name: Build (single-threaded)
+      run: cmake --build ${{ github.workspace }}/build-single-thread --config Release
+
+    - name: Test (single-threaded)
+      working-directory: ${{ github.workspace }}/build-single-thread
+      run: ctest --build-config Release --output-on-failure
+
+  single-threaded-emscripten:
+    name: Single-threaded Emscripten build (CSV_ENABLE_THREADS=OFF)
+    runs-on: ubuntu-latest
+    env:
+      # TODO: Set to '1' to re-enable wasm runtime tests once a lightweight
+      # Emscripten smoke subset is in place and stable in CI.
+      CSV_EMSCRIPTEN_RUN_TESTS: '0'
+
+    steps:
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v5
+      with:
+        submodules: recursive
+
+    - name: Install single_header
+      id: single-header
+      uses: vincentlaucsb/single_header@0.1.0
+      with:
+        run: "false"
+
+    - name: Cache CMake FetchContent dependencies
+      uses: actions/cache@v5
+      with:
+        path: ${{ env.CSV_FETCHCONTENT_BASE_DIR }}
+        key: fetchcontent-${{ runner.os }}-emscripten-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+
+    - name: Set up Emscripten
+      uses: mymindstorm/setup-emsdk@667eb33f24e84e7f362c16d8d7fff0629a73e15e # v14
+      with:
+        version: latest
+
+    - name: Configure CMake (single-threaded emscripten)
+      run: >
+        emcmake cmake -B ${{ github.workspace }}/build-single-thread-emscripten
+        -DCSV_ENABLE_THREADS=OFF
+        -DCSV_CXX_STANDARD=20
+        -DCSV_BUILD_SINGLE_INCLUDE_TEST=ON
+        -DCSV_SINGLE_HEADER_EXECUTABLE="${{ steps.single-header.outputs.executable }}"
+        -DCMAKE_CROSSCOMPILING_EMULATOR=node
+        -DCMAKE_BUILD_TYPE=Release
+        -S ${{ github.workspace }}
+
+    - name: Build (single-threaded emscripten)
+      run: cmake --build ${{ github.workspace }}/build-single-thread-emscripten --config Release
+
+    - name: Test (single-threaded emscripten)
+      if: env.CSV_EMSCRIPTEN_RUN_TESTS == '1'
+      working-directory: ${{ github.workspace }}/build-single-thread-emscripten
+      run: ctest --build-config Release --output-on-failure
+
+    - name: Skip tests (single-threaded emscripten)
+      if: env.CSV_EMSCRIPTEN_RUN_TESTS != '1'
+      run: echo "Skipping Emscripten ctest (build-only coverage). Set CSV_EMSCRIPTEN_RUN_TESTS=1 to re-enable."
+
+  simd-branches:
+    name: SIMD branch verification (${{ matrix.simd_mode }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        simd_mode: [avx2, sse2, no-simd]
+        include:
+          - simd_mode: avx2
+            # Force AVX2 so __AVX2__ branch is compiled deterministically.
+            cmake_no_simd: "OFF"
+            cmake_extra_flags: "-DCMAKE_CXX_FLAGS=-mavx2"
+          - simd_mode: sse2
+            # Force SSE2-only path by disabling auto-detected AVX2.
+            # -mno-avx2 prevents __AVX2__ from being defined so the SSE2 branch compiles.
+            cmake_no_simd: "OFF"
+            cmake_extra_flags: "-DCMAKE_CXX_FLAGS=-mno-avx2"
+          - simd_mode: no-simd
+            cmake_no_simd: "ON"
+            cmake_extra_flags: ""
+
+    steps:
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v5
+      with:
+        submodules: recursive
+
+    - name: Cache CMake FetchContent dependencies
+      uses: actions/cache@v5
+      with:
+        path: ${{ env.CSV_FETCHCONTENT_BASE_DIR }}
+        key: fetchcontent-${{ runner.os }}-simd-${{ matrix.simd_mode }}-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+
+    - name: Configure CMake (${{ matrix.simd_mode }})
+      run: >
+        cmake -B ${{ github.workspace }}/build-simd-${{ matrix.simd_mode }}
+        -DCSV_CXX_STANDARD=20
+        -DCSV_ENABLE_THREADS=ON
+        -DCSV_NO_SIMD=${{ matrix.cmake_no_simd }}
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_CXX_COMPILER=g++
+        -DCMAKE_C_COMPILER=gcc
+        ${{ matrix.cmake_extra_flags }}
+        -S ${{ github.workspace }}
+
+    - name: Build (${{ matrix.simd_mode }})
+      run: cmake --build ${{ github.workspace }}/build-simd-${{ matrix.simd_mode }} --config Release
+
+    - name: Test (${{ matrix.simd_mode }})
+      working-directory: ${{ github.workspace }}/build-simd-${{ matrix.simd_mode }}
+      run: ctest --build-config Release --output-on-failure

@@ -1,0 +1,183 @@
+name: Memory and Thread Sanitizers
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+permissions:
+  contents: read
+
+env:
+  CSV_FETCHCONTENT_BASE_DIR: ${{ github.workspace }}/.cache/fetchcontent
+
+jobs:
+  linux-sanitizers:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sanitizer: address
+            cxx_standard: 11
+            flag: "-fsanitize=address -fno-omit-frame-pointer"
+            name: "AddressSanitizer"
+          - sanitizer: address
+            cxx_standard: 20
+            flag: "-fsanitize=address -fno-omit-frame-pointer"
+            name: "AddressSanitizer"
+          - sanitizer: thread
+            cxx_standard: 20
+            flag: "-fsanitize=thread"
+            name: "ThreadSanitizer"
+          - sanitizer: undefined
+            cxx_standard: 17
+            flag: "-fsanitize=undefined -fno-omit-frame-pointer"
+            name: "UndefinedBehaviorSanitizer"
+    
+    env:
+      ASAN_OPTIONS: "detect_leaks=1:halt_on_error=0"
+      TSAN_OPTIONS: "halt_on_error=1"
+      UBSAN_OPTIONS: "halt_on_error=1"
+    
+    steps:
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v5
+      with:
+        submodules: recursive
+
+    - name: Cache CMake FetchContent dependencies
+      uses: actions/cache@v5
+      with:
+        path: ${{ env.CSV_FETCHCONTENT_BASE_DIR }}
+        key: fetchcontent-${{ runner.os }}-sanitizer-${{ matrix.sanitizer }}-std${{ matrix.cxx_standard }}-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake
+    
+    - name: Configure CMake with ${{ matrix.name }}
+      run: |
+        mkdir -p build
+        cd build
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCSV_CXX_STANDARD=${{ matrix.cxx_standard }} \
+          -DCMAKE_CXX_COMPILER=g++ \
+          -DCMAKE_C_COMPILER=gcc \
+          -DCMAKE_CXX_FLAGS="${{ matrix.flag }} -g" \
+          -DCMAKE_C_FLAGS="${{ matrix.flag }} -g"
+    
+    - name: Build with ${{ matrix.name }}
+      run: cmake --build build --config Debug
+    
+    - name: Test with ${{ matrix.name }}
+      working-directory: build
+      run: ctest --output-on-failure -V
+      timeout-minutes: 20
+    
+    - name: Upload sanitizer logs
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: linux-sanitizer-logs-${{ matrix.sanitizer }}-std${{ matrix.cxx_standard }}
+        path: build/Testing/
+
+  windows-asan-msvc:
+    name: MSVC AddressSanitizer (C++20)
+    runs-on: windows-latest
+
+    env:
+      ASAN_OPTIONS: "halt_on_error=1"
+
+    steps:
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v5
+      with:
+        submodules: recursive
+
+    - name: Set up MSVC developer command prompt
+      uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+
+    - name: Cache CMake FetchContent dependencies
+      uses: actions/cache@v5
+      with:
+        path: ${{ env.CSV_FETCHCONTENT_BASE_DIR }}
+        key: fetchcontent-${{ runner.os }}-msvc-asan-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+
+    - name: Configure CMake with MSVC AddressSanitizer
+      shell: cmd
+      run: >
+        cmake -S %GITHUB_WORKSPACE%
+        -B %GITHUB_WORKSPACE%\build\msvc-asan
+        -DCSV_CXX_STANDARD=20
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        -DCMAKE_CXX_FLAGS="/fsanitize=address /Zi"
+        -DCMAKE_C_FLAGS="/fsanitize=address /Zi"
+        -DCMAKE_EXE_LINKER_FLAGS="/INCREMENTAL:NO"
+        -DCMAKE_SHARED_LINKER_FLAGS="/INCREMENTAL:NO"
+
+    - name: Build with MSVC AddressSanitizer
+      run: cmake --build ${{ github.workspace }}/build/msvc-asan --config RelWithDebInfo
+
+    - name: Test with MSVC AddressSanitizer
+      working-directory: ${{ github.workspace }}/build/msvc-asan
+      run: ctest --build-config RelWithDebInfo --output-on-failure -V
+      timeout-minutes: 20
+
+    - name: Upload MSVC AddressSanitizer logs
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: windows-msvc-asan-logs-std20
+        path: build/msvc-asan/Testing/
+
+  valgrind:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v5
+      with:
+        submodules: recursive
+
+    - name: Cache CMake FetchContent dependencies
+      uses: actions/cache@v5
+      with:
+        path: ${{ env.CSV_FETCHCONTENT_BASE_DIR }}
+        key: fetchcontent-${{ runner.os }}-valgrind-${{ hashFiles('CMakeLists.txt', 'tests/CMakeLists.txt') }}
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake valgrind
+    
+    - name: Configure CMake
+      run: |
+        mkdir -p build
+        cd build
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCSV_CXX_STANDARD=17 \
+          -DCMAKE_CXX_COMPILER=g++ \
+          -DCMAKE_C_COMPILER=gcc \
+          -DCMAKE_CXX_FLAGS="-g -O1" \
+          -DCMAKE_C_FLAGS="-g -O1"
+    
+    - name: Build
+      run: cmake --build build --config Debug
+    
+    - name: Test with Valgrind
+      working-directory: build
+      run: ctest --output-on-failure
+      timeout-minutes: 60
+    
+    - name: Upload Valgrind results
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: valgrind-results
+        path: build/Testing/
